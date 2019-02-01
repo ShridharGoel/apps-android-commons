@@ -704,7 +704,7 @@ public class NearbyFragment extends CommonsDaggerSupportFragment
     }
 
     private void showErrorMessage(String message) {
-        ViewUtil.showLongToast(getActivity(), message);
+        ViewUtil.showLongSnackbar(getView(), message);
     }
 
     /**

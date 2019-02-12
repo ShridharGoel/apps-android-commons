@@ -1,20 +1,17 @@
 package fr.free.nrw.commons.media;
 
+import android.annotation.SuppressLint;
 import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.database.DataSetObserver;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.support.annotation.Nullable;
-import android.text.Editable;
 import android.text.Html;
 import android.text.TextUtils;
-import android.text.TextWatcher;
-import android.util.Log;
 import android.util.TypedValue;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -22,7 +19,6 @@ import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
-import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
@@ -30,7 +26,6 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.IOException;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Locale;
@@ -47,6 +42,7 @@ import fr.free.nrw.commons.Media;
 import fr.free.nrw.commons.MediaDataExtractor;
 import fr.free.nrw.commons.MediaWikiImageView;
 import fr.free.nrw.commons.R;
+import fr.free.nrw.commons.Utils;
 import fr.free.nrw.commons.auth.SessionManager;
 import fr.free.nrw.commons.category.CategoryDetailsActivity;
 import fr.free.nrw.commons.contributions.ContributionsFragment;
@@ -56,6 +52,10 @@ import fr.free.nrw.commons.di.CommonsDaggerSupportFragment;
 import fr.free.nrw.commons.location.LatLng;
 import fr.free.nrw.commons.mwapi.MediaWikiApi;
 import fr.free.nrw.commons.ui.widget.CompatTextView;
+import fr.free.nrw.commons.utils.DateUtils;
+import io.reactivex.Single;
+import io.reactivex.android.schedulers.AndroidSchedulers;
+import io.reactivex.schedulers.Schedulers;
 import timber.log.Timber;
 
 import static android.content.Context.CLIPBOARD_SERVICE;
@@ -94,6 +94,8 @@ public class MediaDetailFragment extends CommonsDaggerSupportFragment {
     MediaWikiApi mwApi;
     @Inject
     SessionManager sessionManager;
+    @Inject
+    ReasonBuilder reasonBuilder;
 
     private int initialListTop = 0;
 
@@ -236,7 +238,7 @@ public class MediaDetailFragment extends CommonsDaggerSupportFragment {
         if(getParentFragment()!=null && getParentFragment().getParentFragment()!=null) {
             //Added a check because, not necessarily, the parent fragment will have a parent fragment, say
             // in the case when MediaDetailPagerFragment is directly started by the CategoryImagesActivity
-            ((ContributionsFragment) (getParentFragment().getParentFragment())).nearbyNoificationCardView
+            ((ContributionsFragment) (getParentFragment().getParentFragment())).nearbyNotificationCardView
                 .setVisibility(View.GONE);
         }
         media = detailProvider.getMediaAtPosition(index);
@@ -387,9 +389,7 @@ public class MediaDetailFragment extends CommonsDaggerSupportFragment {
     @OnClick(R.id.copyWikicode)
     public void onCopyWikicodeClicked(){
         String data = "[[" + media.getFilename() + "|thumb|" + media.getDescription() + "]]";
-        ClipboardManager clipboard = (ClipboardManager) getContext().getApplicationContext().getSystemService(CLIPBOARD_SERVICE);
-        clipboard.setPrimaryClip(ClipData.newPlainText("wikiCode", data));
-
+        Utils.copy("wikiCode",data,getContext());
         Timber.d("Generated wikidata copy code: %s", data);
 
         Toast.makeText(getContext(), getString(R.string.wikicode_copied), Toast.LENGTH_SHORT).show();
@@ -397,7 +397,7 @@ public class MediaDetailFragment extends CommonsDaggerSupportFragment {
 
     @OnClick(R.id.nominateDeletion)
     public void onDeleteButtonClicked(){
-        final ArrayAdapter<String> languageAdapter = new ArrayAdapter<String>(getActivity(),
+        final ArrayAdapter<String> languageAdapter = new ArrayAdapter<>(getActivity(),
                 R.layout.simple_spinner_dropdown_list, reasonList);
         final Spinner spinner = new Spinner(getActivity());
         spinner.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
@@ -407,33 +407,28 @@ public class MediaDetailFragment extends CommonsDaggerSupportFragment {
         AlertDialog.Builder builder = new AlertDialog.Builder(getActivity());
         builder.setView(spinner);
         builder.setTitle(R.string.nominate_delete)
-                .setPositiveButton(R.string.about_translate_proceed, new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        String reason = spinner.getSelectedItem().toString();
-                        ReasonBuilder reasonBuilder = new ReasonBuilder(reason,
-                                getActivity(),
-                                media,
-                                sessionManager,
-                                mwApi);
-                        reason = reasonBuilder.getReason();
-                        DeleteTask deleteTask = new DeleteTask(getActivity(), media, reason);
-                        deleteTask.execute();
-                        isDeleted = true;
-                        enableDeleteButton(false);
-                    }
-                });
-        builder.setNegativeButton(R.string.about_translate_cancel, new DialogInterface.OnClickListener() {
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                dialog.dismiss();
-            }
-        });
+                .setPositiveButton(R.string.about_translate_proceed, (dialog, which) -> onDeleteClicked(spinner));
+        builder.setNegativeButton(R.string.about_translate_cancel, (dialog, which) -> dialog.dismiss());
         AlertDialog dialog = builder.create();
         dialog.show();
         if(isDeleted) {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
         }
+    }
+
+    @SuppressLint("CheckResult")
+    private void onDeleteClicked(Spinner spinner) {
+        String reason = spinner.getSelectedItem().toString();
+        Single<String> deletionReason = reasonBuilder.getReason(media, reason);
+        deletionReason
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(s -> {
+                    DeleteTask deleteTask = new DeleteTask(getActivity(), media, reason);
+                    deleteTask.execute();
+                    isDeleted = true;
+                    enableDeleteButton(false);
+                });
     }
 
     @OnClick(R.id.seeMore)
@@ -530,8 +525,7 @@ public class MediaDetailFragment extends CommonsDaggerSupportFragment {
         if (date == null || date.toString() == null || date.toString().isEmpty()) {
             return "Uploaded date not available";
         }
-        SimpleDateFormat formatter = new SimpleDateFormat("dd MMM yyyy", Locale.getDefault());
-        return formatter.format(date);
+        return DateUtils.dateInLocaleFormat(date);
     }
 
     /**

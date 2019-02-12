@@ -3,9 +3,11 @@ package fr.free.nrw.commons.nearby;
 import android.animation.ObjectAnimator;
 import android.animation.TypeEvaluator;
 import android.animation.ValueAnimator;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
@@ -14,6 +16,7 @@ import android.support.annotation.Nullable;
 import android.support.design.widget.BottomSheetBehavior;
 import android.support.design.widget.CoordinatorLayout;
 import android.support.design.widget.FloatingActionButton;
+import android.support.graphics.drawable.VectorDrawableCompat;
 import android.support.v7.app.AlertDialog;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -27,9 +30,9 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import com.mapbox.mapboxsdk.Mapbox;
 import com.mapbox.mapboxsdk.annotations.Icon;
@@ -44,8 +47,6 @@ import com.mapbox.mapboxsdk.geometry.LatLng;
 import com.mapbox.mapboxsdk.maps.MapView;
 import com.mapbox.mapboxsdk.maps.MapboxMap;
 import com.mapbox.mapboxsdk.maps.MapboxMapOptions;
-import com.mapbox.mapboxsdk.maps.OnMapReadyCallback;
-import com.mapbox.services.android.telemetry.MapboxTelemetry;
 
 import java.lang.reflect.Type;
 import java.util.ArrayList;
@@ -61,26 +62,23 @@ import fr.free.nrw.commons.Utils;
 import fr.free.nrw.commons.auth.LoginActivity;
 import fr.free.nrw.commons.bookmarks.locations.BookmarkLocationsDao;
 import fr.free.nrw.commons.contributions.ContributionController;
-
+import fr.free.nrw.commons.kvstore.BasicKvStore;
+import fr.free.nrw.commons.kvstore.JsonKvStore;
 import fr.free.nrw.commons.utils.LocationUtils;
-import fr.free.nrw.commons.utils.PlaceUtils;
-import fr.free.nrw.commons.utils.UriDeserializer;
+import fr.free.nrw.commons.utils.UiUtils;
 import fr.free.nrw.commons.utils.ViewUtil;
 import timber.log.Timber;
 
-import static android.app.Activity.RESULT_OK;
-import static android.content.pm.PackageManager.PERMISSION_GRANTED;
-import static fr.free.nrw.commons.wikidata.WikidataConstants.WIKIDATA_ENTITY_ID_PREF;
-import static fr.free.nrw.commons.wikidata.WikidataConstants.WIKIDATA_ITEM_LOCATION;
+import static fr.free.nrw.commons.utils.LengthUtils.formatDistanceBetween;
+import static fr.free.nrw.commons.wikidata.WikidataConstants.PLACE_OBJECT;
 
 public class NearbyMapFragment extends DaggerFragment {
 
-    @Inject
-    @Named("application_preferences") SharedPreferences applicationPrefs;
     public MapView mapView;
     private List<NearbyBaseMarker> baseMarkerOptions;
     private fr.free.nrw.commons.location.LatLng curLatLng;
     public fr.free.nrw.commons.location.LatLng[] boundaryCoordinates;
+    private List<Place> bookmarkedplaces;
 
     private View bottomSheetList;
     private View bottomSheetDetails;
@@ -113,8 +111,6 @@ public class NearbyMapFragment extends DaggerFragment {
     private Animation fab_close;
     private Animation fab_open;
     private Animation rotate_forward;
-    public ContributionController controller;
-    private DirectUpload directUpload;
 
     private Place place;
     private Marker selected;
@@ -132,17 +128,16 @@ public class NearbyMapFragment extends DaggerFragment {
     public boolean searchThisAreaModeOn = false;
     public boolean checkingAround = false;
 
-    private Bundle bundleForUpdtes;// Carry information from activity about changed nearby places and current location
+    private Bundle bundleForUpdates;// Carry information from activity about changed nearby places and current location
     private boolean searchedAroundCurrentLocation = true;
 
-    @Inject
-    @Named("prefs")
-    SharedPreferences prefs;
-    @Inject
-    @Named("direct_nearby_upload_prefs")
-    SharedPreferences directPrefs;
-    @Inject
-    BookmarkLocationsDao bookmarkLocationDao;
+    @Inject @Named("application_preferences") BasicKvStore applicationKvStore;
+    @Inject @Named("defaultKvStore") BasicKvStore prefs;
+    @Inject @Named("direct_nearby_upload_prefs") JsonKvStore directKvStore;
+    @Inject @Named("default_preferences") BasicKvStore defaultKvStore;
+    @Inject BookmarkLocationsDao bookmarkLocationDao;
+    @Inject ContributionController controller;
+    @Inject Gson gson;
 
     private static final double ZOOM_LEVEL = 14f;
 
@@ -154,13 +149,7 @@ public class NearbyMapFragment extends DaggerFragment {
         super.onCreate(savedInstanceState);
         Timber.d("Nearby map fragment created");
 
-        controller = new ContributionController(this);
-        directUpload = new DirectUpload(this, controller);
-
         Bundle bundle = this.getArguments();
-        Gson gson = new GsonBuilder()
-                .registerTypeAdapter(Uri.class, new UriDeserializer())
-                .create();
         if (bundle != null) {
             String gsonPlaceList = bundle.getString("PlaceList");
             String gsonLatLng = bundle.getString("CurLatLng");
@@ -175,22 +164,16 @@ public class NearbyMapFragment extends DaggerFragment {
             baseMarkerOptions = NearbyController
                     .loadAttractionsFromLocationToBaseMarkerOptions(curLatLng,
                             placeList,
-                            getActivity());
+                            getActivity(),
+                            bookmarkLocationDao.getAllBookmarksLocations());
             boundaryCoordinates = gson.fromJson(gsonBoundaryCoordinates, gsonBoundaryCoordinatesType);
         }
         if (curLatLng != null) {
             Mapbox.getInstance(getActivity(),
                     getString(R.string.mapbox_commons_app_token));
-            MapboxTelemetry.getInstance().setTelemetryEnabled(false);
+            Mapbox.getTelemetry().setUserTelemetryRequestState(false);
         }
         setRetainInstance(true);
-    }
-
-
-    @Override
-    public void onActivityCreated(@Nullable Bundle savedInstanceState) {
-        super.onActivityCreated(savedInstanceState);
-
     }
 
     @Override
@@ -235,13 +218,10 @@ public class NearbyMapFragment extends DaggerFragment {
      * location tracker marker of user.
      */
     public void updateMapSlightly() {
-        Timber.d("updateMapSlightly called, bundle is:"+bundleForUpdtes);
+        Timber.d("updateMapSlightly called, bundle is:"+ bundleForUpdates);
         if (mapboxMap != null) {
-            Gson gson = new GsonBuilder()
-                    .registerTypeAdapter(Uri.class, new UriDeserializer())
-                    .create();
-            if (bundleForUpdtes != null) {
-                String gsonLatLng = bundleForUpdtes.getString("CurLatLng");
+            if (bundleForUpdates != null) {
+                String gsonLatLng = bundleForUpdates.getString("CurLatLng");
                 Type curLatLngType = new TypeToken<fr.free.nrw.commons.location.LatLng>() {}.getType();
                 curLatLng = gson.fromJson(gsonLatLng, curLatLngType);
             }
@@ -256,16 +236,12 @@ public class NearbyMapFragment extends DaggerFragment {
      * previous nearby call.
      */
     public void updateMapSignificantlyForCurrentLocation() {
-        Timber.d("updateMapSignificantlyForCurrentLocation called, bundle is:"+bundleForUpdtes);
+        Timber.d("updateMapSignificantlyForCurrentLocation called, bundle is:"+ bundleForUpdates);
         if (mapboxMap != null) {
-            if (bundleForUpdtes != null) {
-                Gson gson = new GsonBuilder()
-                        .registerTypeAdapter(Uri.class, new UriDeserializer())
-                        .create();
-
-                String gsonPlaceList = bundleForUpdtes.getString("PlaceList");
-                String gsonLatLng = bundleForUpdtes.getString("CurLatLng");
-                String gsonBoundaryCoordinates = bundleForUpdtes.getString("BoundaryCoord");
+            if (bundleForUpdates != null) {
+                String gsonPlaceList = bundleForUpdates.getString("PlaceList");
+                String gsonLatLng = bundleForUpdates.getString("CurLatLng");
+                String gsonBoundaryCoordinates = bundleForUpdates.getString("BoundaryCoord");
                 Type listType = new TypeToken<List<Place>>() {}.getType();
                 List<Place> placeList = gson.fromJson(gsonPlaceList, listType);
                 Type curLatLngType = new TypeToken<fr.free.nrw.commons.location.LatLng>() {}.getType();
@@ -274,14 +250,15 @@ public class NearbyMapFragment extends DaggerFragment {
                 baseMarkerOptions = NearbyController
                         .loadAttractionsFromLocationToBaseMarkerOptions(curLatLng,
                                 placeList,
-                                getActivity());
+                                getActivity(),
+                                bookmarkLocationDao.getAllBookmarksLocations());
                 boundaryCoordinates = gson.fromJson(gsonBoundaryCoordinates, gsonBoundaryCoordinatesType);
             }
             mapboxMap.clear();
             addCurrentLocationMarker(mapboxMap);
             updateMapToTrackPosition();
             // We are trying to find nearby places around our current location, thus custom parameter is nullified
-            addNearbyMarkerstoMapBoxMap(null);
+            addNearbyMarkersToMapBoxMap(null);
         }
     }
 
@@ -296,10 +273,11 @@ public class NearbyMapFragment extends DaggerFragment {
         List<NearbyBaseMarker> customBaseMarkerOptions =  NearbyController
                 .loadAttractionsFromLocationToBaseMarkerOptions(curLatLng, // Curlatlang will be used to calculate distances
                         placeList,
-                        getActivity());
+                        getActivity(),
+                        bookmarkLocationDao.getAllBookmarksLocations());
         mapboxMap.clear();
         // We are trying to find nearby places around our custom searched area, thus custom parameter is nonnull
-        addNearbyMarkerstoMapBoxMap(customBaseMarkerOptions);
+        addNearbyMarkersToMapBoxMap(customBaseMarkerOptions);
         addCurrentLocationMarker(mapboxMap);
         // Re-enable mapbox gestures on custom location markers load
         mapboxMap.getUiSettings().setAllGesturesEnabled(true);
@@ -328,8 +306,8 @@ public class NearbyMapFragment extends DaggerFragment {
                 mapboxMap.addPolygon(currentLocationPolygonOptions);
             }
 
-                // Make camera to follow user on location change
-                CameraPosition position ;
+            // Make camera to follow user on location change
+            CameraPosition position ;
 
             // Do not update camera position is search this area mode on
             if (!searchThisAreaModeOn) {
@@ -375,7 +353,7 @@ public class NearbyMapFragment extends DaggerFragment {
 
         fabPlus = ((NearbyFragment)getParentFragment()).view.findViewById(R.id.fab_plus);
         fabCamera = ((NearbyFragment)getParentFragment()).view.findViewById(R.id.fab_camera);
-        fabGallery = ((NearbyFragment)getParentFragment()).view.findViewById(R.id.fab_galery);
+        fabGallery = ((NearbyFragment)getParentFragment()).view.findViewById(R.id.fab_gallery);
         fabRecenter = ((NearbyFragment)getParentFragment()).view.findViewById(R.id.fab_recenter);
 
         fab_open = AnimationUtils.loadAnimation(getParentFragment().getActivity(), R.anim.fab_open);
@@ -404,7 +382,7 @@ public class NearbyMapFragment extends DaggerFragment {
         bookmarkButtonImage = getActivity().findViewById(R.id.bookmarkButtonImage);
 
         searchThisAreaButton = ((NearbyFragment)getParentFragment()).view.findViewById(R.id.search_this_area_button);
-        searchThisAreaButtonProgressBar = ((NearbyFragment)getParentFragment()).view.findViewById(R.id.search_this_area_button_progres_bar);
+        searchThisAreaButtonProgressBar = ((NearbyFragment)getParentFragment()).view.findViewById(R.id.search_this_area_button_progress_bar);
 
     }
 
@@ -413,7 +391,7 @@ public class NearbyMapFragment extends DaggerFragment {
      */
     private void setListeners() {
         fabPlus.setOnClickListener(view -> {
-            if (applicationPrefs.getBoolean("login_skipped", false)) {
+            if (applicationKvStore.getBoolean("login_skipped", false)) {
                 // prompt the user to login
                 new AlertDialog.Builder(getContext())
                         .setMessage(R.string.login_alert_message)
@@ -515,6 +493,19 @@ public class NearbyMapFragment extends DaggerFragment {
             commonsButtonText.setVisibility(View.GONE);
             directionsButtonText.setVisibility(View.GONE);
         }
+        title.setOnLongClickListener(view -> {
+                    Utils.copy("place",title.getText().toString(),getContext());
+                    Toast.makeText(getContext(),"Text copied to clipboard",Toast.LENGTH_SHORT).show();
+                    return true;
+                }
+        );
+        title.setOnClickListener(view -> {
+            if (bottomSheetDetailsBehavior.getState() == BottomSheetBehavior.STATE_COLLAPSED) {
+                bottomSheetDetailsBehavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+            } else {
+                bottomSheetDetailsBehavior.setState(BottomSheetBehavior.STATE_COLLAPSED);
+            }
+        });
     }
 
     /**
@@ -538,13 +529,10 @@ public class NearbyMapFragment extends DaggerFragment {
             mapView = new MapView(getParentFragment().getActivity(), options);
             // create map
             mapView.onCreate(savedInstanceState);
-            mapView.getMapAsync(new OnMapReadyCallback() {
-                @Override
-                public void onMapReady(MapboxMap mapboxMap) {
-                    NearbyMapFragment.this.mapboxMap = mapboxMap;
-                    addMapMovementListeners();
-                    updateMapSignificantlyForCurrentLocation();
-                }
+            mapView.getMapAsync(mapboxMap -> {
+                NearbyMapFragment.this.mapboxMap = mapboxMap;
+                addMapMovementListeners();
+                updateMapSignificantlyForCurrentLocation();
             });
             mapView.setStyleUrl("asset://mapstyle.json");
         }
@@ -556,63 +544,53 @@ public class NearbyMapFragment extends DaggerFragment {
      */
     private void addMapMovementListeners() {
 
-        mapboxMap.addOnCameraMoveListener(new MapboxMap.OnCameraMoveListener() {
+        mapboxMap.addOnCameraMoveListener(() -> {
 
-            @Override
-            public void onCameraMove() {
+            if (NearbyController.currentLocation != null) { // If our nearby markers are calculated at least once
 
-                if (NearbyController.currentLocation != null) { // If our nearby markers are calculated at least once
+                if (searchThisAreaButton.getVisibility() == View.GONE) {
+                    searchThisAreaButton.setVisibility(View.VISIBLE);
+                }
+                double distance = mapboxMap.getCameraPosition().target
+                        .distanceTo(new LatLng(NearbyController.currentLocation.getLatitude()
+                                , NearbyController.currentLocation.getLongitude()));
 
-                    if (searchThisAreaButton.getVisibility() == View.GONE) {
-                        searchThisAreaButton.setVisibility(View.VISIBLE);
-                    }
-                    double distance = mapboxMap.getCameraPosition().target
-                            .distanceTo(new LatLng(NearbyController.currentLocation.getLatitude()
-                                    , NearbyController.currentLocation.getLongitude()));
-
-                    if (distance > NearbyController.searchedRadius*1000*3/4) { //Convert to meter, and compare if our distance is bigger than 3/4 or our searched area
-                        checkingAround = true;
-                        if (!searchThisAreaModeOn) { // If we are changing mode, then change click action
+                if (distance > NearbyController.searchedRadius*1000*3/4) { //Convert to meter, and compare if our distance is bigger than 3/4 or our searched area
+                    checkingAround = true;
+                    if (!searchThisAreaModeOn) { // If we are changing mode, then change click action
+                        searchThisAreaModeOn = true;
+                        searchThisAreaButton.setOnClickListener(view -> {
                             searchThisAreaModeOn = true;
-                            searchThisAreaButton.setOnClickListener(new View.OnClickListener() {
-                                @Override
-                                public void onClick(View view) {
-                                    searchThisAreaModeOn = true;
-                                    // Lock map operations during search this area operation
-                                    mapboxMap.getUiSettings().setAllGesturesEnabled(false);
-                                    searchThisAreaButtonProgressBar.setVisibility(View.VISIBLE);
-                                    searchThisAreaButton.setVisibility(View.GONE);
-                                    searchedAroundCurrentLocation = false;
-                                    ((NearbyFragment)getParentFragment())
-                                            .refreshViewForCustomLocation(LocationUtils
-                                                    .mapBoxLatLngToCommonsLatLng(mapboxMap.getCameraPosition().target), false);
-                                }
-                            });
-                        }
-
-                    } else {
-                        checkingAround = false;
-                        if (searchThisAreaModeOn) {
-                            searchThisAreaModeOn = false; // This flag will help us to understand should we folor users location or not
-                            searchThisAreaButton.setOnClickListener(new View.OnClickListener() {
-                                @Override
-                                public void onClick(View view) {
-                                    searchThisAreaModeOn = true;
-                                    // Lock map operations during search this area operation
-                                    mapboxMap.getUiSettings().setAllGesturesEnabled(false);
-                                    searchThisAreaButtonProgressBar.setVisibility(View.VISIBLE);
-                                    fabRecenter.callOnClick();
-                                    searchThisAreaButton.setVisibility(View.GONE);
-                                    searchedAroundCurrentLocation = true;
-                                    ((NearbyFragment)getParentFragment())
-                                            .refreshViewForCustomLocation(LocationUtils
-                                                    .mapBoxLatLngToCommonsLatLng(mapboxMap.getCameraPosition().target), true);
-                                }
-                            });
-                        }
-                        if (searchedAroundCurrentLocation) {
+                            // Lock map operations during search this area operation
+                            mapboxMap.getUiSettings().setAllGesturesEnabled(false);
+                            searchThisAreaButtonProgressBar.setVisibility(View.VISIBLE);
                             searchThisAreaButton.setVisibility(View.GONE);
-                        }
+                            searchedAroundCurrentLocation = false;
+                            ((NearbyFragment)getParentFragment())
+                                    .refreshViewForCustomLocation(LocationUtils
+                                            .mapBoxLatLngToCommonsLatLng(mapboxMap.getCameraPosition().target), false);
+                        });
+                    }
+
+                } else {
+                    checkingAround = false;
+                    if (searchThisAreaModeOn) {
+                        searchThisAreaModeOn = false; // This flag will help us to understand should we folor users location or not
+                        searchThisAreaButton.setOnClickListener(view -> {
+                            searchThisAreaModeOn = true;
+                            // Lock map operations during search this area operation
+                            mapboxMap.getUiSettings().setAllGesturesEnabled(false);
+                            searchThisAreaButtonProgressBar.setVisibility(View.GONE);
+                            fabRecenter.callOnClick();
+                            searchThisAreaButton.setVisibility(View.GONE);
+                            searchedAroundCurrentLocation = true;
+                            ((NearbyFragment)getParentFragment())
+                                    .refreshViewForCustomLocation(LocationUtils
+                                            .mapBoxLatLngToCommonsLatLng(mapboxMap.getCameraPosition().target), true);
+                        });
+                    }
+                    if (searchedAroundCurrentLocation) {
+                        searchThisAreaButton.setVisibility(View.GONE);
                     }
                 }
             }
@@ -669,11 +647,23 @@ public class NearbyMapFragment extends DaggerFragment {
     }
 
     /**
+     * Checks whether current location marker is in visible region or not
+     * @return true if point is in region
+     */
+    public boolean isCurrentLocationMarkerVisible() {
+        if (currentLocationMarker != null) {
+            return mapboxMap.getProjection().getVisibleRegion().latLngBounds.contains(currentLocationMarker.getPosition());
+        } else {
+            return false;
+        }
+    }
+
+    /**
      * Adds markers for nearby places to mapbox map
      */
-    private void addNearbyMarkerstoMapBoxMap(@Nullable List<NearbyBaseMarker> customNearbyBaseMarker) {
+    private void addNearbyMarkersToMapBoxMap(@Nullable List<NearbyBaseMarker> customNearbyBaseMarker) {
         List<NearbyBaseMarker> baseMarkerOptions;
-        Timber.d("addNearbyMarkerstoMapBoxMap is called");
+        Timber.d("addNearbyMarkersToMapBoxMap is called");
         if (customNearbyBaseMarker != null) {
             // If we try to update nearby points for a custom location choosen from map (we are not there)
             baseMarkerOptions = customNearbyBaseMarker;
@@ -785,8 +775,8 @@ public class NearbyMapFragment extends DaggerFragment {
     }
 
     /*
-    * We are not able to hide FABs without removing anchors, this method removes anchors
-    * */
+     * We are not able to hide FABs without removing anchors, this method removes anchors
+     * */
     private void removeAnchorFromFABs(FloatingActionButton floatingActionButton) {
         //get rid of anchors
         //Somehow this was the only way https://stackoverflow.com/questions/32732932
@@ -808,12 +798,12 @@ public class NearbyMapFragment extends DaggerFragment {
         addAnchorToSmallFABs(fabGallery, ((NearbyFragment)getParentFragment()).view.findViewById(R.id.empty_view).getId());
 
         addAnchorToSmallFABs(fabCamera, ((NearbyFragment)getParentFragment()).view.findViewById(R.id.empty_view1).getId());
-        }
+    }
 
 
     /*
-    * Add anchors back before making them visible again.
-    * */
+     * Add anchors back before making them visible again.
+     * */
     private void addAnchorToBigFABs(FloatingActionButton floatingActionButton, int anchorID) {
         CoordinatorLayout.LayoutParams params = new CoordinatorLayout.LayoutParams
                 (ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -823,9 +813,9 @@ public class NearbyMapFragment extends DaggerFragment {
     }
 
     /*
-    * Add anchors back before making them visible again. Big and small fabs have different anchor
-    * gravities, therefore the are two methods.
-    * */
+     * Add anchors back before making them visible again. Big and small fabs have different anchor
+     * gravities, therefore the are two methods.
+     * */
     private void addAnchorToSmallFABs(FloatingActionButton floatingActionButton, int anchorID) {
         CoordinatorLayout.LayoutParams params = new CoordinatorLayout.LayoutParams
                 (ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -853,6 +843,7 @@ public class NearbyMapFragment extends DaggerFragment {
             boolean isBookmarked = bookmarkLocationDao.updateBookmarkLocation(place);
             int updatedIcon = isBookmarked ? R.drawable.ic_round_star_filled_24px : R.drawable.ic_round_star_border_24px;
             bookmarkButtonImage.setImageResource(updatedIcon);
+            updateMarker(isBookmarked, place);
         });
 
         wikipediaButton.setEnabled(place.hasWikipediaLink());
@@ -884,7 +875,7 @@ public class NearbyMapFragment extends DaggerFragment {
             if (fabCamera.isShown()) {
                 Timber.d("Camera button tapped. Place: %s", place.toString());
                 storeSharedPrefs();
-                directUpload.initiateCameraUpload();
+                controller.initiateCameraPick(getActivity());
             }
         });
 
@@ -892,67 +883,14 @@ public class NearbyMapFragment extends DaggerFragment {
             if (fabGallery.isShown()) {
                 Timber.d("Gallery button tapped. Place: %s", place.toString());
                 storeSharedPrefs();
-                directUpload.initiateGalleryUpload();
+                controller.initiateGalleryPick(getActivity(), false);
             }
         });
     }
 
     void storeSharedPrefs() {
-        SharedPreferences.Editor editor = directPrefs.edit();
-        editor.putString("Title", place.getName());
-        editor.putString("Desc", place.getLongDescription());
-        editor.putString("Category", place.getCategory());
-        editor.putString(WIKIDATA_ENTITY_ID_PREF, place.getWikiDataEntityId());
-        editor.putString(WIKIDATA_ITEM_LOCATION, PlaceUtils.latLangToString(place.location));
-        editor.apply();
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-        Timber.d("onRequestPermissionsResult: req code = " + " perm = " + permissions + " grant =" + grantResults);
-
-        // Do not use requestCode 1 as it will conflict with NearbyFragment's requestCodes
-        switch (requestCode) {
-            // 4 = "Read external storage" allowed when gallery selected
-            case 4: {
-                if (grantResults.length > 0 && grantResults[0] == PERMISSION_GRANTED) {
-                    Timber.d("Call controller.startGalleryPick()");
-                    controller.startGalleryPick();
-                }
-            }
-            break;
-
-            // 5 = "Write external storage" allowed when camera selected
-            case 5: {
-                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    Timber.d("Call controller.startCameraCapture()");
-                    controller.startCameraCapture();
-                }
-            }
-        }
-    }
-
-    @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-
-
-        if (resultCode == RESULT_OK) {
-            Timber.d("OnActivityResult() parameters: Req code: %d Result code: %d Data: %s",
-                    requestCode, resultCode, data);
-            String wikidataEntityId = directPrefs.getString(WIKIDATA_ENTITY_ID_PREF, null);
-            String wikidataItemLocation = directPrefs.getString(WIKIDATA_ITEM_LOCATION, null);
-            if (requestCode == ContributionController.SELECT_FROM_CAMERA) {
-                // If coming from camera, pass null as uri. Because camera photos get saved to a
-                // fixed directory
-                controller.handleImagePicked(requestCode, null, true, wikidataEntityId, wikidataItemLocation);
-            } else {
-                controller.handleImagePicked(requestCode, data.getData(), true, wikidataEntityId, wikidataItemLocation);
-            }
-        } else {
-            Timber.e("OnActivityResult() parameters: Req code: %d Result code: %d Data: %s",
-                    requestCode, resultCode, data);
-        }
+        Timber.d("Store place object %s", place.toString());
+        directKvStore.putJson(PLACE_OBJECT, place);
     }
 
     private void openWebView(Uri link) {
@@ -964,7 +902,7 @@ public class NearbyMapFragment extends DaggerFragment {
      * @param isFabOpen state of FAB buttons, open when clicked on fab button, closed on other click
      */
     private void animateFAB(boolean isFabOpen) {
-            this.isFabOpen = !isFabOpen;
+        this.isFabOpen = !isFabOpen;
         if (fabPlus.isShown()){
             if (isFabOpen) {
                 fabPlus.startAnimation(rotate_backward);
@@ -999,10 +937,10 @@ public class NearbyMapFragment extends DaggerFragment {
     }
 
     /**
-     * This bundle is sent whenever and updte for nearby map comes, not for recreation, for updates
+     * This bundle is sent whenever and update for nearby map comes, not for recreation, for updates
      */
-    public void setBundleForUpdtes(Bundle bundleForUpdtes) {
-        this.bundleForUpdtes = bundleForUpdtes;
+    public void setBundleForUpdates(Bundle bundleForUpdates) {
+        this.bundleForUpdates = bundleForUpdates;
     }
 
     @Override
@@ -1018,6 +956,7 @@ public class NearbyMapFragment extends DaggerFragment {
         if (mapView != null) {
             mapView.onPause();
         }
+        bookmarkedplaces = bookmarkLocationDao.getAllBookmarksLocations();
         super.onPause();
     }
 
@@ -1038,6 +977,13 @@ public class NearbyMapFragment extends DaggerFragment {
         setListeners();
         transparentView.setClickable(false);
         transparentView.setAlpha(0);
+        if (bookmarkedplaces != null) {
+            for (Place place : bookmarkedplaces) {
+                if (!bookmarkLocationDao.findBookmarkLocation(place)) {
+                    updateMarker(false, place);
+                }
+            }
+        }
     }
 
     @Override
@@ -1072,5 +1018,43 @@ public class NearbyMapFragment extends DaggerFragment {
             return latLng;
         }
     }
+
+
+    public void updateMarker(boolean isBookmarked, Place place) {
+
+        VectorDrawableCompat vectorDrawable;
+        if (isBookmarked) {
+            vectorDrawable = VectorDrawableCompat.create(
+                    getContext().getResources(), R.drawable.ic_custom_bookmark_marker, getContext().getTheme()
+            );
+        }
+        else {
+            vectorDrawable = VectorDrawableCompat.create(
+                    getContext().getResources(), R.drawable.ic_custom_map_marker, getContext().getTheme()
+            );
+        }
+      for(Marker marker: mapboxMap.getMarkers()){
+            if(marker.getTitle()!=null && marker.getTitle().equals(place.getName())){
+
+                Bitmap icon = UiUtils.getBitmap(vectorDrawable);
+
+                String distance = formatDistanceBetween(curLatLng, place.location);
+                place.setDistance(distance);
+
+                NearbyBaseMarker nearbyBaseMarker = new NearbyBaseMarker();
+                nearbyBaseMarker.title(place.name);
+                nearbyBaseMarker.position(
+                        new com.mapbox.mapboxsdk.geometry.LatLng(
+                                place.location.getLatitude(),
+                                place.location.getLongitude()));
+                nearbyBaseMarker.place(place);
+                nearbyBaseMarker.icon(IconFactory.getInstance(getContext())
+                        .fromBitmap(icon));
+                marker.setIcon(IconFactory.getInstance(getContext()).fromBitmap(icon));
+            }
+        }
+
+    }
+
 }
 

@@ -52,7 +52,7 @@ public interface UploadView {
 
     void setBottomCardVisibility(boolean visible);
 
-    void setBottomCardVisibility(@UploadPage int page);
+    void setBottomCardVisibility(@UploadPage int page, int uploadCount);
 
     void updateRightCardContent(boolean gpsPresent);
 
@@ -64,9 +64,11 @@ public interface UploadView {
 
     void updateTopCardContent();
 
+    void updateSubtitleVisibility(int imageCount);
+
     void dismissKeyboard();
 
-    void showBadPicturePopup(@ImageUtils.Result int errorMessage);
+    void showBadPicturePopup(String errorMessage);
 
     void showDuplicatePicturePopup();
 
@@ -79,4 +81,8 @@ public interface UploadView {
     void initDefaultCategories();
 
     void showNoCategorySelectedWarning();
+
+    void showProgressDialog();
+
+    void hideProgressDialog();
 }

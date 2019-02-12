@@ -163,6 +163,7 @@
   <string name="detail_description_empty">No description</string>
   <string name="detail_license_empty">Unknown license</string>
   <string name="menu_refresh">Refresh</string>
+  <string name="storage_permission_title">Requesting Storage Permission</string>
   <string name="read_storage_permission_rationale">Required permission: Read external storage. App cannot access your gallery without this.</string>
   <string name="write_storage_permission_rationale">Required permission: Write external storage. App cannot access your camera without this.</string>
   <string name="location_permission_rationale">Optional permission: Get current location for category suggestions</string>
@@ -261,7 +262,7 @@
   <string name="skip_login">Skip</string>
   <string name="navigation_item_login">Log in</string>
   <string name="skip_login_title">Do you really want to skip login?</string>
-  <string name="skip_login_message">You will not be able to upload pictures.</string>
+  <string name="skip_login_message">You would have to log in to upload pictures in the future.</string>
   <string name="login_alert_message">Please log in to use this feature</string>
   <string name="copy_wikicode">Copy the wikitext to the clipboard</string>
   <string name="wikicode_copied">The wikitext was copied to the clipboard</string>
@@ -370,9 +371,14 @@
   <string name="error_occurred">Error occurred!</string>
   <string name="notifications_channel_name_all">Commons Notification</string>
 
+  <string name="preference_author_name_toggle">Use custom author name</string>
+  <string name="preference_author_name_toggle_summary">Use a custom author name instead of your username while uploading photos</string>
+  <string name="preference_author_name">Custom author name</string>
+  <string name="preference_author_name_summary">The custom author name to use instead of your username in uploads</string>
   <string name="contributions_fragment">Contributions</string>
   <string name="nearby_fragment">Nearby</string>
   <string name="notifications">Notifications</string>
+  <string name="archived_notifications">Notifications(archived)</string>
   <string name="display_nearby_notification">Display nearby notification</string>
   <string name="display_nearby_notification_summary">Tap here to see the nearest place that needs pictures</string>
   <string name="no_close_nearby">No nearby places found close to you</string>
@@ -445,5 +451,25 @@ Upload your first media by touching the camera or gallery icon above.</string>
 
   <string name="this_function_needs_network_connection">This function requires network connection, please check your connection settings.</string>
   <string name="bad_token_error_proposed_solution">Upload failed due to issues with edit token. Please try logging out and in again. </string>
+    <string name="error_processing_image">Error occurred while processing the image. Please try again!</string>
 
+  <plurals name="receiving_shared_content">
+    <item quantity="one">Receiving shared content. Processing the image might take some time depending on the size of the image and your device</item>
+    <item quantity="other">Receiving shared content. Processing the images might take some time depending on the size of the images and your device</item>
+  </plurals>
+
+  <string name="no_image">No images used</string>
+  <string name="no_image_reverted">No images reverted</string>
+  <string name="no_image_uploaded">No images uploaded</string>
+
+  <string name="no_notification">You have no unread Notification</string>
+  <string name="no_archived_notification">You have no archived notification</string>
+  <string name="share_logs_using">Share logs using</string>
+  <string name="menu_option_archived">View archived</string>
+  <string name="menu_option_unread">View unread</string>
+
+  <string name="error_occurred_in_picking_images">Error occurred while picking images</string>
+  <string name="image_chooser_title">Choose Images to upload</string>
+
+  <string name="please_wait">Please wait…</string>
 </resources>

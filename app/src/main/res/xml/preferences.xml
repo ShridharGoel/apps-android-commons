@@ -16,13 +16,6 @@
     <fr.free.nrw.commons.ui.LongTitlePreferences.LongTitlePreferenceCategory
         android:title="@string/preference_category_general">
 
-        <fr.free.nrw.commons.ui.LongTitlePreferences.LongTitleListPreference
-            android:key="defaultLicense"
-            android:title="@string/preference_license"
-            android:entries="@array/pref_defaultLicense_entries"
-            android:entryValues="@array/pref_defaultLicense_values"
-            android:defaultValue="@string/license_pref_cc_by_sa_4_0" />
-
         <fr.free.nrw.commons.ui.LongTitlePreferences.LongTitleSwitchPreference
             android:key="useExternalStorage"
             android:title="@string/use_external_storage"
@@ -35,6 +28,17 @@
             android:title= "@string/set_limit"
             android:inputType="numberDecimal"
             android:maxLength="3" />
+
+        <fr.free.nrw.commons.ui.LongTitlePreferences.LongTitleSwitchPreference
+            android:key="useAuthorName"
+            android:title="@string/preference_author_name_toggle"
+            android:summary="@string/preference_author_name_toggle_summary"/>
+
+        <fr.free.nrw.commons.ui.LongTitlePreferences.LongTitleEditTextPreference
+            android:key="authorName"
+            android:title="@string/preference_author_name"
+            android:summary="@string/preference_author_name_summary"
+            />
 
         <fr.free.nrw.commons.ui.LongTitlePreferences.LongTitleSwitchPreference
             android:key="displayNearbyCardView"

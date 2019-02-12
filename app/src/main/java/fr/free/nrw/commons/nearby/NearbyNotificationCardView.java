@@ -1,7 +1,6 @@
 package fr.free.nrw.commons.nearby;
 
 import android.content.Context;
-
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.util.AttributeSet;
@@ -21,7 +20,7 @@ import timber.log.Timber;
 /**
  * Custom card view for nearby notification card view on main screen, above contributions list
  */
-public class NearbyNoificationCardView  extends SwipableCardView {
+public class NearbyNotificationCardView extends SwipableCardView {
 
     private Context context;
 
@@ -36,21 +35,21 @@ public class NearbyNoificationCardView  extends SwipableCardView {
 
     public PermissionType permissionType;
 
-    public NearbyNoificationCardView(@NonNull Context context) {
+    public NearbyNotificationCardView(@NonNull Context context) {
         super(context);
         this.context = context;
         cardViewVisibilityState = CardViewVisibilityState.INVISIBLE;
         init();
     }
 
-    public NearbyNoificationCardView(@NonNull Context context, @Nullable AttributeSet attrs) {
+    public NearbyNotificationCardView(@NonNull Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
         this.context = context;
         cardViewVisibilityState = CardViewVisibilityState.INVISIBLE;
         init();
     }
 
-    public NearbyNoificationCardView(@NonNull Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
+    public NearbyNotificationCardView(@NonNull Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
         super(context, attrs, defStyleAttr);
         this.context = context;
         cardViewVisibilityState = CardViewVisibilityState.INVISIBLE;
@@ -79,8 +78,8 @@ public class NearbyNoificationCardView  extends SwipableCardView {
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-        // If you don't setVisibility after getting layout params, then you will se an empty space in place of nerabyNotificationCardView
-        if (((MainActivity)context).prefs.getBoolean("displayNearbyCardView", true) && this.cardViewVisibilityState == NearbyNoificationCardView.CardViewVisibilityState.READY) {
+        // If you don't setVisibility after getting layout params, then you will se an empty space in place of nearby NotificationCardView
+        if (((MainActivity)context).defaultKvStore.getBoolean("displayNearbyCardView", true) && this.cardViewVisibilityState == NearbyNotificationCardView.CardViewVisibilityState.READY) {
             this.setVisibility(VISIBLE);
         } else {
             this.setVisibility(GONE);
@@ -95,7 +94,7 @@ public class NearbyNoificationCardView  extends SwipableCardView {
     @Override public boolean onSwipe(View view) {
         view.setVisibility(GONE);
         // Save shared preference for nearby card view accordingly
-        ((MainActivity) context).prefs.edit().putBoolean("displayNearbyCardView", false).apply();
+        ((MainActivity) context).defaultKvStore.putBoolean("displayNearbyCardView", false);
         ViewUtil.showLongToast(context,
             getResources().getString(R.string.nearby_notification_dismiss_message));
         return true;
@@ -104,23 +103,22 @@ public class NearbyNoificationCardView  extends SwipableCardView {
     /**
      * Time is up, data for card view is not ready, so do not display it
      */
-    private void errorOcured() {
+    private void errorOccurred() {
         this.setVisibility(GONE);
     }
 
     /**
      * Data for card view is ready, display card view
      */
-    private void suceeded() {
+    private void succeeded() {
         this.setVisibility(VISIBLE);
     }
 
     /**
      * Pass place information to views.
-     * @param isClosestNearbyPlaceFound false if there are no close place
      * @param place Closes place where we will get information from
      */
-    public void updateContent(boolean isClosestNearbyPlaceFound, Place place) {
+    public void updateContent(Place place) {
         Timber.d("Update nearby card notification content");
         this.setVisibility(VISIBLE);
         cardViewVisibilityState = CardViewVisibilityState.READY;
@@ -132,24 +130,19 @@ public class NearbyNoificationCardView  extends SwipableCardView {
         notificationTitle.setVisibility(VISIBLE);
         notificationDistance.setVisibility(VISIBLE);
         notificationIcon.setVisibility(VISIBLE);
+        notificationTitle.setText(place.name);
+        notificationDistance.setText(place.distance);
 
-        if (isClosestNearbyPlaceFound) {
-            notificationTitle.setText(place.name);
-            notificationDistance.setText(place.distance);
-        } else {
-            notificationDistance.setText("");
-            notificationTitle.setText(R.string.no_close_nearby);
-        }
     }
 
     @Override
     protected void onVisibilityChanged(@NonNull View changedView, int visibility) {
         super.onVisibilityChanged(changedView, visibility);
         if (visibility == VISIBLE) {
-            /**
-             * Sometimes we need to preserve previous state of notification card view without getting
-             * any data from user. Ie. wen user came back from Media Details fragment to Contrib List
-             * fragment, we need to know what was the state of card view, and set it to exact same state.
+            /*
+              Sometimes we need to preserve previous state of notification card view without getting
+              any data from user. Ie. wen user came back from Media Details fragment to Contrib List
+              fragment, we need to know what was the state of card view, and set it to exact same state.
              */
             switch (cardViewVisibilityState) {
                 case READY:
@@ -190,7 +183,7 @@ public class NearbyNoificationCardView  extends SwipableCardView {
         READY,
         INVISIBLE,
         ASK_PERMISSION,
-        ERROR_OCURED
+        ERROR_OCCURRED
     }
 
     /**
@@ -199,7 +192,7 @@ public class NearbyNoificationCardView  extends SwipableCardView {
      */
     public enum PermissionType {
         ENABLE_GPS,
-        ENABLE_LOCATION_PERMISSON, // For only after Marsmallow
+        ENABLE_LOCATION_PERMISSION, // For only after Marshmallow
         NO_PERMISSION_NEEDED
     }
 }

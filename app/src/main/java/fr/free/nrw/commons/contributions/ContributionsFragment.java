@@ -5,7 +5,6 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.database.DataSetObserver;
@@ -17,13 +16,11 @@ import android.support.annotation.Nullable;
 import android.support.v4.app.Fragment;
 import android.support.v4.app.FragmentManager;
 import android.support.v4.app.FragmentTransaction;
-
+import android.support.v4.app.LoaderManager;
 import android.support.v4.content.CursorLoader;
 import android.support.v4.content.Loader;
-import android.support.v4.app.LoaderManager;
 import android.support.v4.widget.CursorAdapter;
 import android.support.v7.app.AlertDialog;
-import android.support.v7.widget.RecyclerView;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -31,39 +28,36 @@ import android.view.ViewGroup;
 import android.widget.Adapter;
 import android.widget.AdapterView;
 import android.widget.CheckBox;
-import android.widget.CompoundButton;
-
 import android.widget.Toast;
-import butterknife.BindView;
-import butterknife.ButterKnife;
-import fr.free.nrw.commons.campaigns.Campaign;
-import fr.free.nrw.commons.campaigns.CampaignResponseDTO;
-import fr.free.nrw.commons.campaigns.CampaignView;
-import fr.free.nrw.commons.campaigns.CampaignsPresenter;
-import fr.free.nrw.commons.campaigns.ICampaignsView;
+
 import java.util.ArrayList;
-import java.util.concurrent.CountDownLatch;
 
 import javax.inject.Inject;
 import javax.inject.Named;
 
-import fr.free.nrw.commons.BuildConfig;
+import butterknife.BindView;
+import butterknife.ButterKnife;
 import fr.free.nrw.commons.HandlerService;
 import fr.free.nrw.commons.Media;
 import fr.free.nrw.commons.R;
+import fr.free.nrw.commons.campaigns.Campaign;
+import fr.free.nrw.commons.campaigns.CampaignView;
+import fr.free.nrw.commons.campaigns.CampaignsPresenter;
+import fr.free.nrw.commons.campaigns.ICampaignsView;
 import fr.free.nrw.commons.di.CommonsDaggerSupportFragment;
+import fr.free.nrw.commons.kvstore.BasicKvStore;
 import fr.free.nrw.commons.location.LatLng;
 import fr.free.nrw.commons.location.LocationServiceManager;
 import fr.free.nrw.commons.location.LocationUpdateListener;
 import fr.free.nrw.commons.media.MediaDetailPagerFragment;
 import fr.free.nrw.commons.mwapi.MediaWikiApi;
+import fr.free.nrw.commons.mwapi.OkHttpJsonApiClient;
 import fr.free.nrw.commons.nearby.NearbyController;
-import fr.free.nrw.commons.nearby.NearbyNoificationCardView;
+import fr.free.nrw.commons.nearby.NearbyNotificationCardView;
 import fr.free.nrw.commons.nearby.Place;
-import fr.free.nrw.commons.notification.NotificationController;
-import fr.free.nrw.commons.notification.UnreadNotificationsCheckAsync;
 import fr.free.nrw.commons.settings.Prefs;
 import fr.free.nrw.commons.upload.UploadService;
+import fr.free.nrw.commons.utils.ConfigUtils;
 import fr.free.nrw.commons.utils.DialogUtil;
 import fr.free.nrw.commons.utils.ViewUtil;
 import io.reactivex.Observable;
@@ -71,10 +65,8 @@ import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.disposables.CompositeDisposable;
 import io.reactivex.disposables.Disposable;
 import io.reactivex.schedulers.Schedulers;
-import org.acra.util.ToastSender;
 import timber.log.Timber;
 
-import static fr.free.nrw.commons.contributions.Contribution.STATE_FAILED;
 import static fr.free.nrw.commons.contributions.ContributionDao.Table.ALL_FIELDS;
 import static fr.free.nrw.commons.contributions.ContributionsContentProvider.BASE_URI;
 import static fr.free.nrw.commons.location.LocationServiceManager.LOCATION_REQUEST;
@@ -88,33 +80,28 @@ public class ContributionsFragment
                     MediaDetailPagerFragment.MediaDetailProvider,
                     FragmentManager.OnBackStackChangedListener,
                     ContributionsListFragment.SourceRefresher,
-                    LocationUpdateListener,ICampaignsView
-                    {
-    @Inject
-    @Named("default_preferences")
-    SharedPreferences prefs;
-    @Inject
-    ContributionDao contributionDao;
-    @Inject
-    MediaWikiApi mediaWikiApi;
-    @Inject
-    NotificationController notificationController;
-    @Inject
-    NearbyController nearbyController;
+                    LocationUpdateListener,
+                    ICampaignsView {
+    @Inject @Named("default_preferences") BasicKvStore defaultKvStore;
+    @Inject ContributionDao contributionDao;
+    @Inject MediaWikiApi mediaWikiApi;
+    @Inject NearbyController nearbyController;
+    @Inject OkHttpJsonApiClient okHttpJsonApiClient;
+    @Inject CampaignsPresenter presenter;
 
     private ArrayList<DataSetObserver> observersWaitingForLoad = new ArrayList<>();
-    private Cursor allContributions;
     private UploadService uploadService;
     private boolean isUploadServiceConnected;
     private CompositeDisposable compositeDisposable = new CompositeDisposable();
-    CountDownLatch waitForContributionsListFragment = new CountDownLatch(1);
 
     private ContributionsListFragment contributionsListFragment;
     private MediaDetailPagerFragment mediaDetailPagerFragment;
     public static final String CONTRIBUTION_LIST_FRAGMENT_TAG = "ContributionListFragmentTag";
     public static final String MEDIA_DETAIL_PAGER_FRAGMENT_TAG = "MediaDetailFragmentTag";
 
-    public NearbyNoificationCardView nearbyNoificationCardView;
+    @BindView(R.id.card_view_nearby) public NearbyNotificationCardView nearbyNotificationCardView;
+    @BindView(R.id.campaigns_view) CampaignView campaignView;
+
     private Disposable placesDisposable;
     private LatLng curLatLng;
 
@@ -124,12 +111,8 @@ public class ContributionsFragment
     private boolean isFragmentAttachedBefore = false;
     private View checkBoxView;
     private CheckBox checkBox;
-    private CampaignsPresenter presenter;
 
-
-    @BindView(R.id.campaigns_view) CampaignView campaignView;
-
-                        /**
+    /**
      * Since we will need to use parent activity on onAuthCookieAcquired, we have to wait
      * fragment to be attached. Latch will be responsible for this sync.
      */
@@ -139,6 +122,9 @@ public class ContributionsFragment
             uploadService = (UploadService) ((HandlerService.HandlerServiceLocalBinder) binder)
                     .getService();
             isUploadServiceConnected = true;
+            if (contributionsListFragment.getAdapter() != null) {
+                ((ContributionsListAdapter)contributionsListFragment.getAdapter()).setUploadService(uploadService);
+            }
         }
 
         @Override
@@ -159,20 +145,14 @@ public class ContributionsFragment
     public View onCreateView(LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
         View view = inflater.inflate(R.layout.fragment_contributions, container, false);
         ButterKnife.bind(this, view);
-        presenter = new CampaignsPresenter();
         presenter.onAttachView(this);
         campaignView.setVisibility(View.GONE);
-        nearbyNoificationCardView = view.findViewById(R.id.card_view_nearby);
         checkBoxView = View.inflate(getActivity(), R.layout.nearby_permission_dialog, null);
         checkBox = (CheckBox) checkBoxView.findViewById(R.id.never_ask_again);
-        checkBox.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-
-            @Override
-            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
-                if (isChecked) {
-                    // Do not ask for permission on activity start again
-                    prefs.edit().putBoolean("displayLocationPermissionForCardView",false).apply();
-                }
+        checkBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (isChecked) {
+                // Do not ask for permission on activity start again
+                defaultKvStore.putBoolean("displayLocationPermissionForCardView",false);
             }
         });
 
@@ -189,7 +169,7 @@ public class ContributionsFragment
             setContributionsListFragment();
         }
 
-        if(!BuildConfig.FLAVOR.equalsIgnoreCase("beta")){
+        if (!ConfigUtils.isBetaFlavour()) {
             setUploadCount();
         }
 
@@ -224,13 +204,12 @@ public class ContributionsFragment
         - There are some operations we need auth, so we need to make sure isAuthCookieAcquired.
         - And since we use same retained fragment doesn't want to make all network operations
         all over again on same fragment attached to recreated activity, we do this network
-        operations on first time fragment atached to an activity. Then they will be retained
+        operations on first time fragment attached to an activity. Then they will be retained
         until fragment life time ends.
          */
         if (((MainActivity)getActivity()).isAuthCookieAcquired && !isFragmentAttachedBefore) {
             onAuthCookieAcquired(((MainActivity)getActivity()).uploadServiceIntent);
             isFragmentAttachedBefore = true;
-            new UnreadNotificationsCheckAsync((MainActivity) getActivity(), notificationController).execute();
 
         }
     }
@@ -243,13 +222,13 @@ public class ContributionsFragment
         // show tabs on contribution list is visible
         ((MainActivity)getActivity()).showTabs();
         // show nearby card view on contributions list is visible
-        if (nearbyNoificationCardView != null) {
-            if (prefs.getBoolean("displayNearbyCardView", true)) {
-                if (nearbyNoificationCardView.cardViewVisibilityState == NearbyNoificationCardView.CardViewVisibilityState.READY) {
-                    nearbyNoificationCardView.setVisibility(View.VISIBLE);
+        if (nearbyNotificationCardView != null) {
+            if (defaultKvStore.getBoolean("displayNearbyCardView", true)) {
+                if (nearbyNotificationCardView.cardViewVisibilityState == NearbyNotificationCardView.CardViewVisibilityState.READY) {
+                    nearbyNotificationCardView.setVisibility(View.VISIBLE);
                 }
             } else {
-                nearbyNoificationCardView.setVisibility(View.GONE);
+                nearbyNotificationCardView.setVisibility(View.GONE);
             }
         }
 
@@ -273,7 +252,7 @@ public class ContributionsFragment
         // hide tabs on media detail view is visible
         ((MainActivity)getActivity()).hideTabs();
         // hide nearby card view on media detail is visible
-        nearbyNoificationCardView.setVisibility(View.GONE);
+        nearbyNotificationCardView.setVisibility(View.GONE);
 
         // Create if null
         if (getMediaDetailPagerFragment() == null) {
@@ -312,7 +291,7 @@ public class ContributionsFragment
 
     @Override
     public Loader<Cursor> onCreateLoader(int i, Bundle bundle) {
-        int uploads = prefs.getInt(UPLOADS_SHOWING, 100);
+        int uploads = defaultKvStore.getInt(UPLOADS_SHOWING, 100);
         return new CursorLoader(getActivity(), BASE_URI, //TODO find out the reason we pass activity here
                 ALL_FIELDS, "", null,
                 ContributionDao.CONTRIBUTION_SORT + "LIMIT " + uploads);
@@ -332,7 +311,6 @@ public class ContributionsFragment
 
             contributionsListFragment.clearSyncMessage();
             notifyAndMigrateDataSetObservers();
-
             ((ContributionsListAdapter)contributionsListFragment.getAdapter()).setUploadService(uploadService);
         }
     }
@@ -367,7 +345,6 @@ public class ContributionsFragment
         if (getActivity() != null) { // If fragment is attached to parent activity
             getActivity().bindService(uploadServiceIntent, uploadServiceConnection, Context.BIND_AUTO_CREATE);
             isUploadServiceConnected = true;
-            allContributions = contributionDao.loadAllContributions();
             getActivity().getSupportLoaderManager().initLoader(0, null, ContributionsFragment.this);
         }
 
@@ -383,13 +360,13 @@ public class ContributionsFragment
                     // No need to display permission request button anymore
                     locationManager.registerLocationManager();
                 } else {
-                    if (prefs.getBoolean("displayLocationPermissionForCardView", true)) {
+                    if (defaultKvStore.getBoolean("displayLocationPermissionForCardView", true)) {
                         // Still ask for permission
                         DialogUtil.showAlertDialog(getActivity(),
                                 getString(R.string.nearby_card_permission_title),
                                 getString(R.string.nearby_card_permission_explanation),
-                                () -> displayYouWontSeeNearbyMessage(),
-                                () -> enableLocationPermission(),
+                                this::displayYouWontSeeNearbyMessage,
+                                this::enableLocationPermission,
                                 checkBoxView,
                                 false);
                     }
@@ -474,7 +451,7 @@ public class ContributionsFragment
     @SuppressWarnings("ConstantConditions")
     private void setUploadCount() {
 
-        compositeDisposable.add(mediaWikiApi
+        compositeDisposable.add(okHttpJsonApiClient
                 .getUploadCount(((MainActivity)getActivity()).sessionManager.getCurrentAccount().name)
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
@@ -495,19 +472,6 @@ public class ContributionsFragment
 
     public void betaSetUploadCount(int betaUploadCount) {
         displayUploadCount(betaUploadCount);
-    }
-
-    /**
-     * Updates notification indicator on toolbar to indicate there are unread notifications
-     * @param isThereUnreadNotifications true if user checked notifications before last notification date
-     */
-    public void updateNotificationsNotification(boolean isThereUnreadNotifications) {
-        ((MainActivity)getActivity()).updateNotificationIcon(isThereUnreadNotifications);
-    }
-
-    @Override
-    public void onStart() {
-        super.onStart();
     }
 
     @Override
@@ -532,22 +496,22 @@ public class ContributionsFragment
         firstLocationUpdate = true;
         locationManager.addLocationListener(this);
 
-        boolean isSettingsChanged = prefs.getBoolean(Prefs.IS_CONTRIBUTION_COUNT_CHANGED, false);
-        prefs.edit().putBoolean(Prefs.IS_CONTRIBUTION_COUNT_CHANGED, false).apply();
+        boolean isSettingsChanged = defaultKvStore.getBoolean(Prefs.IS_CONTRIBUTION_COUNT_CHANGED, false);
+        defaultKvStore.putBoolean(Prefs.IS_CONTRIBUTION_COUNT_CHANGED, false);
         if (isSettingsChanged) {
             refreshSource();
         }
 
 
-        if (prefs.getBoolean("displayNearbyCardView", true)) {
+        if (defaultKvStore.getBoolean("displayNearbyCardView", true)) {
             checkGPS();
-            if (nearbyNoificationCardView.cardViewVisibilityState == NearbyNoificationCardView.CardViewVisibilityState.READY) {
-                nearbyNoificationCardView.setVisibility(View.VISIBLE);
+            if (nearbyNotificationCardView.cardViewVisibilityState == NearbyNotificationCardView.CardViewVisibilityState.READY) {
+                nearbyNotificationCardView.setVisibility(View.VISIBLE);
             }
 
         } else {
             // Hide nearby notification card view if related shared preferences is false
-            nearbyNoificationCardView.setVisibility(View.GONE);
+            nearbyNotificationCardView.setVisibility(View.GONE);
         }
 
         fetchCampaigns();
@@ -559,13 +523,13 @@ public class ContributionsFragment
     private void checkGPS() {
         if (!locationManager.isProviderEnabled()) {
             Timber.d("GPS is not enabled");
-            nearbyNoificationCardView.permissionType = NearbyNoificationCardView.PermissionType.ENABLE_GPS;
-            if (prefs.getBoolean("displayLocationPermissionForCardView", true)) {
+            nearbyNotificationCardView.permissionType = NearbyNotificationCardView.PermissionType.ENABLE_GPS;
+            if (defaultKvStore.getBoolean("displayLocationPermissionForCardView", true)) {
                 DialogUtil.showAlertDialog(getActivity(),
                         getString(R.string.nearby_card_permission_title),
                         getString(R.string.nearby_card_permission_explanation),
-                        () -> displayYouWontSeeNearbyMessage(),
-                        () -> enableGPS(),
+                        this::displayYouWontSeeNearbyMessage,
+                        this::enableGPS,
                         checkBoxView,
                         false);
             }
@@ -578,25 +542,25 @@ public class ContributionsFragment
     private void checkLocationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             if (locationManager.isLocationPermissionGranted()) {
-                nearbyNoificationCardView.permissionType = NearbyNoificationCardView.PermissionType.NO_PERMISSION_NEEDED;
+                nearbyNotificationCardView.permissionType = NearbyNotificationCardView.PermissionType.NO_PERMISSION_NEEDED;
                 locationManager.registerLocationManager();
             } else {
-                nearbyNoificationCardView.permissionType = NearbyNoificationCardView.PermissionType.ENABLE_LOCATION_PERMISSON;
+                nearbyNotificationCardView.permissionType = NearbyNotificationCardView.PermissionType.ENABLE_LOCATION_PERMISSION;
                 // If user didn't selected Don't ask again
                 if (shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)
-                        && prefs.getBoolean("displayLocationPermissionForCardView", true)) {
+                        && defaultKvStore.getBoolean("displayLocationPermissionForCardView", true)) {
                         DialogUtil.showAlertDialog(getActivity(),
                                 getString(R.string.nearby_card_permission_title),
                                 getString(R.string.nearby_card_permission_explanation),
-                                () -> displayYouWontSeeNearbyMessage(),
-                                () -> enableLocationPermission(),
+                                this::displayYouWontSeeNearbyMessage,
+                                this::enableLocationPermission,
                                 checkBoxView,
                                 false);
                 }
             }
         } else {
             // If device is under Marshmallow, we already checked for GPS
-            nearbyNoificationCardView.permissionType = NearbyNoificationCardView.PermissionType.NO_PERMISSION_NEEDED;
+            nearbyNotificationCardView.permissionType = NearbyNotificationCardView.PermissionType.NO_PERMISSION_NEEDED;
             locationManager.registerLocationManager();
         }
     }
@@ -651,10 +615,15 @@ public class ContributionsFragment
             Place closestNearbyPlace = nearbyPlacesInfo.placeList.get(0);
             String distance = formatDistanceBetween(curLatLng, closestNearbyPlace.location);
             closestNearbyPlace.setDistance(distance);
-            nearbyNoificationCardView.updateContent (true, closestNearbyPlace);
+            nearbyNotificationCardView.updateContent(closestNearbyPlace);
+            if (mediaDetailPagerFragment != null && mediaDetailPagerFragment.isVisible()) {
+                nearbyNotificationCardView.setVisibility(View.GONE);
+            }else {
+                nearbyNotificationCardView.setVisibility(View.VISIBLE);
+            }
         } else {
             // Means that no close nearby place is found
-            nearbyNoificationCardView.updateContent (false, null);
+            nearbyNotificationCardView.setVisibility(View.GONE);
         }
     }
 
@@ -697,7 +666,7 @@ public class ContributionsFragment
         if (firstLocationUpdate) {
             updateClosestNearbyCardViewInfo();
             // Turn it to false, since it is not first location update anymore. To change closest location
-            // notifiction, we need to wait for a significant location change.
+            // notification, we need to wait for a significant location change.
             firstLocationUpdate = false;
         }
     }
@@ -717,17 +686,13 @@ public class ContributionsFragment
      * ask the presenter to fetch the campaigns only if user has not manually disabled it
      */
     private void fetchCampaigns() {
-        if (prefs.getBoolean("displayCampaignsCardView", true)) {
+        if (defaultKvStore.getBoolean("displayCampaignsCardView", true)) {
             presenter.getCampaigns();
         }
     }
 
     @Override public void showMessage(String message) {
         Toast.makeText(getContext(), message, Toast.LENGTH_SHORT).show();
-    }
-
-    @Override public MediaWikiApi getMediaWikiApi() {
-        return mediaWikiApi;
     }
 
     @Override public void showCampaigns(Campaign campaign) {
